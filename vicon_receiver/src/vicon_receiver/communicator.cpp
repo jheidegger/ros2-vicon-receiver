@@ -11,6 +11,11 @@ Communicator::Communicator() : Node("vicon")
     this->get_parameter("hostname", hostname);
     this->get_parameter("buffer_size", buffer_size);
     this->get_parameter("namespace", ns_name);
+
+    // create the tf broadcaster
+    tf_broadcaster_ =
+      std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+
 }
 
 bool Communicator::connect()
@@ -98,10 +103,13 @@ void Communicator::get_frame()
                 vicon_client.GetSegmentGlobalTranslation(subject_name, segment_name);
             Output_GetSegmentGlobalRotationQuaternion rot =
                 vicon_client.GetSegmentGlobalRotationQuaternion(subject_name, segment_name);
-            if (trans.Occluded || rot.Occluded) {
+            
+	    // check for occulusions
+	    if (trans.Occluded || rot.Occluded) {
                 continue;
             }
-            for (size_t i = 0; i < 4; i++)
+            
+	    for (size_t i = 0; i < 4; i++)
             {
                 if (i < 3)
                     current_position.translation[i] = trans.Translation[i];
@@ -117,7 +125,10 @@ void Communicator::get_frame()
 
             if (lock.owns_lock())
             {
-                // get publisher
+		// publish the tf
+		publish_tf(current_position);
+                
+		// get publisher
                 pub_it = pub_map.find(subject_name + "/" + segment_name);
                 if (pub_it != pub_map.end())
                 {
@@ -137,6 +148,30 @@ void Communicator::get_frame()
             }
         }
     }
+}
+
+
+void Communicator::publish_tf(PositionStruct p)
+{
+
+	geometry_msgs::msg::TransformStamped t;
+	t.header.stamp = this->get_clock()->now();
+    	t.header.frame_id = ns_name + "/world";
+	t.child_frame_id = ns_name + "/" + p.subject_name + "/" + p.segment_name;
+	
+	t.transform.translation.x = p.translation[0]/1000.0; 
+        t.transform.translation.y = p.translation[1]/1000.0; 
+        t.transform.translation.z = p.translation[2]/1000.0; 
+
+        tf2::Quaternion q;
+        t.transform.rotation.x = p.rotation[0];
+        t.transform.rotation.y = p.rotation[1];
+        t.transform.rotation.z = p.rotation[2];
+        t.transform.rotation.w = p.rotation[3];
+
+        // Send the transformation
+        tf_broadcaster_->sendTransform(t);
+
 }
 
 void Communicator::create_publisher(const string subject_name, const string segment_name)
